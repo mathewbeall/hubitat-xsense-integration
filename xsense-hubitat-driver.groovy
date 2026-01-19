@@ -877,7 +877,8 @@ def updateChildDevice(String deviceSn, Map deviceData) {
 
     // Update smoke/CO status from alarmStatus in status object
     // alarmStatus: 0 = clear, 1 = smoke alarm, 2 = CO alarm, 3 = both?
-    def alarmStatus = deviceData.status?.alarmStatus ?: 0
+    def alarmStatus = (deviceData.status?.alarmStatus ?: 0) as Integer
+    def coLevel = (deviceData.coLevel ?: 0) as Integer
 
     // Smoke status
     def smokeStatus = "clear"
@@ -888,7 +889,7 @@ def updateChildDevice(String deviceSn, Map deviceData) {
 
     // CO status - check both alarmStatus and coLevel
     def coStatus = "clear"
-    if (alarmStatus == 2 || alarmStatus == 3 || (deviceData.coLevel ?: 0) > 0) {
+    if (alarmStatus == 2 || alarmStatus == 3 || coLevel > 0) {
         coStatus = "detected"
     }
     childDevice.sendEvent(name: "carbonMonoxide", value: coStatus)
