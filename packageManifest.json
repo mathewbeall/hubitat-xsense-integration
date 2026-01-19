@@ -1,10 +1,10 @@
 {
   "packageName": "X-Sense Smoke/CO Detector Integration",
   "author": "Mathew Beall",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minimumHEVersion": "2.2.4",
   "dateReleased": "2026-01-18",
-  "releaseNotes": "Initial release - Full integration for X-Sense smoke and CO detectors via SBS50 bridge with AWS Cognito authentication and IoT Shadow API for real-time status updates.",
+  "releaseNotes": "v1.0.1: Fix CO status type coercion bug that could show false 'detected' status.",
   "documentationLink": "https://github.com/mathewbeall/hubitat-xsense-integration/blob/main/README.md",
   "communityLink": "https://github.com/mathewbeall/hubitat-xsense-integration",
   "drivers": [
