@@ -1,0 +1,13 @@
+{
+  "author": "Mathew Beall",
+  "gitHubUrl": "https://github.com/mathewbeall/hubitat-xsense-integration",
+  "packages": [
+    {
+      "name": "X-Sense Smoke/CO Detector Integration",
+      "category": "Integrations",
+      "tags": ["Cloud", "Safety", "Smoke Detector", "CO Detector", "X-Sense"],
+      "location": "https://raw.githubusercontent.com/mathewbeall/hubitat-xsense-integration/main/packageManifest.json",
+      "description": "Complete Hubitat integration for X-Sense smoke and CO detectors (SC07-MR and compatible models) via the SBS50 bridge. Features AWS Cognito SRP authentication, AWS IoT Shadow API for device status, configurable polling intervals, and automatic child device creation."
+    }
+  ]
+}
