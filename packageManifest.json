@@ -1,10 +1,10 @@
 {
   "packageName": "X-Sense Smoke/CO Detector Integration",
   "author": "Mathew Beall",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "minimumHEVersion": "2.2.4",
-  "dateReleased": "2026-01-18",
-  "releaseNotes": "v1.0.1: Fix CO status type coercion bug that could show false 'detected' status.",
+  "dateReleased": "2026-01-19",
+  "releaseNotes": "v1.0.2: Improve onboarding - prevent actions before credentials configured, auto-refresh device data after initial setup.",
   "documentationLink": "https://github.com/mathewbeall/hubitat-xsense-integration/blob/main/README.md",
   "communityLink": "https://github.com/mathewbeall/hubitat-xsense-integration",
   "drivers": [
