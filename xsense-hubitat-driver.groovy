@@ -81,6 +81,10 @@ def initialize() {
 }
 
 def refresh() {
+    if (!hasCredentials()) {
+        logWarn "Please configure X-Sense credentials before refreshing"
+        return
+    }
     if (checkTokenValid()) {
         pollDevices()
     } else {
@@ -91,6 +95,10 @@ def refresh() {
 // ==================== Authentication ====================
 
 def login() {
+    if (!hasCredentials()) {
+        logWarn "Please configure X-Sense credentials before logging in"
+        return
+    }
     logInfo "Starting X-Sense login"
     sendEvent(name: "connectionStatus", value: "connecting")
     getClientInfo()
@@ -320,6 +328,14 @@ def handleAuthSuccess(Map result) {
     // Get AWS tokens and discover devices
     getAwsTokens()
     schedulePolling()
+
+    // Schedule initial data refresh after discovery completes
+    runIn(10, "initialRefresh")
+}
+
+def initialRefresh() {
+    logInfo "Performing initial data refresh after setup"
+    pollDevices()
 }
 
 def getAwsTokens() {
@@ -573,11 +589,19 @@ def calculateMac(Map extraParams) {
 
 // ==================== Device Discovery ====================
 
+def hasCredentials() {
+    return username && password
+}
+
 def checkTokenValid() {
     return state.accessToken && state.tokenExpiry > now()
 }
 
 def discoverDevices() {
+    if (!hasCredentials()) {
+        logWarn "Please configure X-Sense credentials before discovering devices"
+        return
+    }
     logInfo "Discovering X-Sense devices"
 
     if (!checkTokenValid()) {
