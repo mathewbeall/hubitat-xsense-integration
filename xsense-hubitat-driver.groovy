@@ -382,6 +382,54 @@ def getAwsTokens() {
     }
 }
 
+def refreshAwsCredentials() {
+    // Refresh AWS credentials using existing Cognito access token
+    def extraParams = [
+        userName: username
+    ]
+
+    def bodyMap = [
+        bizCode: "101003",
+        clientType: "1",
+        appVersion: "v1.22.0_20240914.1",
+        appCode: "1220",
+        userName: username,
+        mac: calculateMac(extraParams)
+    ]
+
+    def params = [
+        uri: "https://api.x-sense-iot.com/app",
+        contentType: "application/json",
+        headers: [
+            "Authorization": state.accessToken
+        ],
+        body: new JsonBuilder(bodyMap).toString(),
+        timeout: 30
+    ]
+
+    try {
+        def success = false
+        httpPost(params) { resp ->
+            if (resp.status == 200) {
+                def data = resp.data
+                if (data.reCode == 200 && data.reData) {
+                    state.awsAccessKey = data.reData.accessKeyId
+                    state.awsSecretKey = data.reData.secretAccessKey
+                    state.awsSessionToken = data.reData.sessionToken
+                    logInfo "AWS credentials refreshed successfully"
+                    success = true
+                } else {
+                    logError "Failed to refresh AWS credentials: ${data.reCode} - ${data.reMsg}"
+                }
+            }
+        }
+        return success
+    } catch (e) {
+        logError "Failed to refresh AWS credentials: ${e.message}"
+        return false
+    }
+}
+
 // ==================== Crypto Helper Methods ====================
 
 def getSrpNHex() {
@@ -872,6 +920,36 @@ def getStationShadow(String stationSn, Map station, Map house) {
         } catch (groovyx.net.http.HttpResponseException e) {
             if (e.statusCode == 404) {
                 continue  // Try next shadow page
+            }
+            if (e.statusCode == 403) {
+                logWarn "Shadow API returned 403 for ${stationSn}, refreshing credentials..."
+                if (refreshAwsCredentials()) {
+                    // Retry with fresh credentials
+                    def retryHeaders = [
+                        "Content-Type": "application/x-amz-json-1.0",
+                        "User-Agent": "aws-sdk-iOS/2.26.5 iOS/17.3 en_US",
+                        "X-Amz-Security-Token": state.awsSessionToken
+                    ]
+                    def retrySignedHeaders = signAwsRequest("GET", url, mqttRegion, retryHeaders, null)
+                    retryHeaders.putAll(retrySignedHeaders)
+                    params.headers = retryHeaders
+
+                    try {
+                        httpGet(params) { resp ->
+                            if (resp.status == 200) {
+                                def data = resp.data
+                                if (data?.state?.reported?.devs) {
+                                    deviceCount = data.state.reported.devs.size()
+                                    parseDeviceStatus(stationSn, data.state.reported)
+                                }
+                            }
+                        }
+                        logInfo "Shadow API retry successful after credential refresh"
+                    } catch (retryEx) {
+                        logError "Shadow API retry failed for ${stationSn}: ${retryEx.message}"
+                    }
+                }
+                continue
             }
             logError "Shadow API error for ${stationSn}: ${e.statusCode}"
         } catch (e) {

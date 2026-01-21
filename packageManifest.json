@@ -1,10 +1,10 @@
 {
   "packageName": "X-Sense Smoke/CO Detector Integration",
   "author": "Mathew Beall",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "minimumHEVersion": "2.2.4",
-  "dateReleased": "2026-01-19",
-  "releaseNotes": "v1.0.2: Improve onboarding - prevent actions before credentials configured, auto-refresh device data after initial setup.",
+  "dateReleased": "2026-01-20",
+  "releaseNotes": "v1.0.3: Auto-refresh AWS credentials on 403 errors instead of requiring manual re-login.",
   "documentationLink": "https://github.com/mathewbeall/hubitat-xsense-integration/blob/main/README.md",
   "communityLink": "https://github.com/mathewbeall/hubitat-xsense-integration",
   "drivers": [
