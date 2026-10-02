@@ -105,15 +105,23 @@ Each SWS51 gets an "X-Sense Water Leak Sensor" child device with:
 
 ## Upgrading from 1.x
 
-Version 1.x was a virtual "X-Sense SBS50 Bridge" device that owned the child devices. Version 2.0
-replaces it with an app. Hubitat cannot move child devices from one parent to another, so the app
-creates new child devices and the old ones must be removed:
+Version 1.x was a virtual "X-Sense SBS50 Bridge" device. Version 2.0 is an app, so it is a different
+package rather than an update. Do not use **Update** in HPM. Uninstall the old package and install the
+new one:
 
-1. Update through HPM. The old bridge driver stays installed as an optional, deprecated component.
-2. Follow **Setup** above to add the X-Sense Integration app. New child devices are created.
-3. Re-point any rules, dashboards, and Hubitat Safety Monitor entries at the new child devices.
-4. Delete the old **X-Sense Bridge** virtual device. Deleting it also deletes its child devices.
-5. Optionally remove the deprecated bridge driver through HPM **Modify**, or from **Drivers Code**.
+1. In **Devices**, open your old **X-Sense Bridge** device and click **Remove Device**. This also
+   removes its child devices.
+2. In **Hubitat Package Manager**, choose **Uninstall** and remove the old X-Sense package. If HPM
+   reports an error because something was already deleted by hand, choose **Package Manager
+   Settings** → **Un-Match a Package** instead, then delete any leftover X-Sense entries from
+   **Apps Code** and **Drivers Code**.
+3. In HPM, choose **Install** → **Search by Keywords** → "X-Sense" and install **X-Sense Integration**.
+4. Follow **Setup** above. New child devices are created for every sensor.
+5. Re-point rules, dashboard tiles, and Hubitat Safety Monitor entries at the new child devices.
+
+**Tip:** always add and remove this package through HPM. Deleting app or driver code by hand from
+Apps Code or Drivers Code leaves HPM with a stale record, and its Update, Repair, and Uninstall
+actions will fail until you use Un-Match a Package.
 
 ## Polling Interval
 
