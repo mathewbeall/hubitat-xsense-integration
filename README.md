@@ -1,18 +1,19 @@
 # X-Sense Hubitat Integration
 
-Native Hubitat driver for X-Sense smart smoke/CO detectors and water leak sensors via the SBS50 bridge.
+Native Hubitat integration for X-Sense smart smoke/CO detectors and water leak sensors connected
+through the SBS50 base station. Installed as a Hubitat app that creates one child device per sensor.
 
 ## Supported Devices
 
-- **Bridge**: X-Sense SBS50 Base Station
+- **Base station**: X-Sense SBS50
 - **Smoke/CO Detectors**: SC07-MR (Smoke + CO Combo) and other Link+ compatible devices
 - **Water Leak Sensors**: SWS51 (paired to the SBS50)
 
 ## Requirements
 
 - Hubitat Elevation hub (firmware 2.2.4 or later)
-- X-Sense SBS50 bridge with detectors configured
-- X-Sense account (same credentials used in the X-Sense app)
+- X-Sense SBS50 base station with sensors configured in the X-Sense app
+- X-Sense account (the same email and password you use in the X-Sense app)
 
 ## Installation
 
@@ -21,44 +22,48 @@ Native Hubitat driver for X-Sense smart smoke/CO detectors and water leak sensor
 1. Open **Hubitat Package Manager** (HPM)
 2. Select **Install** → **Search by Keywords**
 3. Search for "X-Sense"
-4. Select "X-Sense Smoke/CO Detector Integration"
-5. Click **Install**
-6. Continue to **Setup** section below
+4. Select "X-Sense Integration"
+5. Click **Install**. HPM installs the app and both child drivers.
+6. Continue to **Setup** below
 
 ### Option 2: Manual Installation
 
-1. In Hubitat, go to **Drivers Code**
-2. Click **+ New Driver**
-3. Paste the contents of `xsense-hubitat-driver.groovy`
-4. Click **Save**
-5. Repeat for `xsense-detector-child.groovy` and `xsense-water-child.groovy`
+1. In Hubitat, go to **Apps Code** → **+ New App**, paste `xsense-app.groovy`, click **Save**
+2. Go to **Drivers Code** → **+ New Driver**, paste `xsense-detector-child.groovy`, click **Save**
+3. Repeat for `xsense-water-child.groovy`
 
 ## Setup
 
-1. Go to **Devices** → **Add Device** → **Virtual**
-2. Enter a name (e.g., "X-Sense Bridge")
-3. Select **X-Sense SBS50 Bridge** as the Type
-4. Click **Save Device**
-5. In Preferences, enter:
-   - **X-Sense Email**: Your X-Sense account email
-   - **X-Sense Password**: Your X-Sense account password
-   - **Poll Interval**: How often to check for updates (default: 5 minutes)
-6. Click **Save Preferences**
-7. Click the **Initialize** command button
-8. Child devices will be created automatically for each detector
+1. Go to **Apps** → **Add User App**
+2. Select **X-Sense Integration**
+3. Enter your **X-Sense Email** and **X-Sense Password**
+4. Choose a **Poll Interval** (default 5 minutes)
+5. Click **Done**
+
+The app logs in, discovers your houses, base stations, and sensors, and creates a child device for
+each sensor. Reopen the app to see connection status, counts, the last error if any, and a table of
+devices with links to each one.
+
+### App Page Actions
+
+- **Log In and Discover Devices**: re-authenticate and re-run discovery
+- **Refresh Device Status**: poll the X-Sense cloud now
+- **Recreate Child Devices**: delete any child whose driver does not match its device type and recreate it
+
+Actions run in the background. Refresh the app page after a few seconds to see the result.
 
 ## How It Works
 
-1. The driver authenticates with X-Sense using AWS Cognito SRP (Secure Remote Password)
-2. Once authenticated, it fetches your houses, stations (bridges), and devices
-3. For each device, a child device is created automatically using the driver that matches its type (smoke/CO detector or water leak sensor)
-4. The driver polls the AWS IoT Shadow API for real-time device status
+1. The app authenticates with X-Sense using AWS Cognito SRP (Secure Remote Password)
+2. Once authenticated, it fetches your houses, stations (base stations), and devices
+3. For each device, a child device is created using the driver that matches its type
+4. The app polls the AWS IoT Shadow API for device status at the configured interval
 
 ## Child Devices
 
 ### Smoke/CO Detectors
 
-Each detector gets its own "X-Sense Smoke/CO Detector" child device with:
+Each detector gets an "X-Sense Smoke/CO Detector" child device with:
 
 #### Capabilities
 - **Smoke Detector**: `smoke` attribute (clear/detected)
@@ -81,7 +86,7 @@ Each detector gets its own "X-Sense Smoke/CO Detector" child device with:
 
 ### Water Leak Sensors
 
-Each SWS51 gets its own "X-Sense Water Leak Sensor" child device with:
+Each SWS51 gets an "X-Sense Water Leak Sensor" child device with:
 
 #### Capabilities
 - **Water Sensor**: `water` attribute (dry/wet)
@@ -92,40 +97,33 @@ Each SWS51 gets its own "X-Sense Water Leak Sensor" child device with:
 - `muteStatus`: muted/notMuted (alarm silenced from the sensor or app)
 - `signalStrength`, `rssi`, `healthStatus`, `deviceStatus`, `lastChecked`: same as detectors
 
-### Upgrading from 1.0.x with Water Leak Sensors
-
-Versions before 1.1.0 created every device as a smoke/CO detector. Hubitat does not allow a
-parent driver to change a child's driver in place, so after upgrading:
-
-1. Open the bridge device and click **Recreate Child Devices**
-2. Any child whose driver does not match its device type is deleted and recreated
-
-Automations that referenced the old child devices will need to be re-pointed at the new ones.
-
-### Diagnosing Unsupported Device Types
-
-If you have an X-Sense device that shows up with the wrong attributes, enable
-**Log raw device shadow data on each poll** in the bridge preferences, click **Refresh**, and
-copy the `Raw shadow for <serial>` lines from the Hubitat log into a GitHub issue. Turn the
-preference back off afterwards, as it logs every device on every poll.
-
 ## Integration with Hubitat Safety Monitor
-
-You can use these devices with HSM (Hubitat Safety Monitor):
 
 1. Go to **Apps** → **Hubitat Safety Monitor**
 2. Under **Configure** → **Smoke**, select your X-Sense detectors
 3. Under **Configure** → **Water**, select your X-Sense water leak sensors
 
+## Upgrading from 1.x
+
+Version 1.x was a virtual "X-Sense SBS50 Bridge" device that owned the child devices. Version 2.0
+replaces it with an app. Hubitat cannot move child devices from one parent to another, so the app
+creates new child devices and the old ones must be removed:
+
+1. Update through HPM. The old bridge driver stays installed as an optional, deprecated component.
+2. Follow **Setup** above to add the X-Sense Integration app. New child devices are created.
+3. Re-point any rules, dashboards, and Hubitat Safety Monitor entries at the new child devices.
+4. Delete the old **X-Sense Bridge** virtual device. Deleting it also deletes its child devices.
+5. Optionally remove the deprecated bridge driver through HPM **Modify**, or from **Drivers Code**.
+
 ## Polling Interval
 
-This integration polls for device status at a configurable interval:
 - **1 minute**: Fastest detection, more API calls
 - **5 minutes**: Default, good balance
 - **10 minutes**: Reduced API calls
 - **30 minutes**: Minimal polling
 
-**Note:** Alarm detection occurs on the next poll cycle, not in real-time. For immediate notification, rely on the physical alarm sound and X-Sense app push notifications.
+**Note:** Alarm detection occurs on the next poll cycle, not in real-time. For immediate notification,
+rely on the physical alarm sound and X-Sense app push notifications.
 
 ## Troubleshooting
 
@@ -134,18 +132,24 @@ This integration polls for device status at a configurable interval:
 - Ensure you're using the email/password for the X-Sense app (not third-party login)
 
 ### Devices Not Appearing
-- Click **Initialize** after saving credentials
-- Check logs for API errors
+- Open the app and click **Log In and Discover Devices**
+- Check the **Last error** line on the app page and the Hubitat log
 - Verify devices are configured in the X-Sense app
 
 ### Child Devices Not Updating
-- Click **Refresh** on the bridge device
-- Look for "Polled X device(s)" in logs to confirm polling is working
-- Check that the bridge shows "connected" status
+- Open the app and click **Refresh Device Status**
+- Look for "Polled X device(s)" in the Hubitat log
+- Check that the app page shows Connection: connected
 
-### Token Expired Errors
-- The driver auto-refreshes tokens
-- If persistent, click **Initialize** to re-authenticate
+### Wrong Driver on a Device
+- Open the app and click **Recreate Child Devices**
+
+### Diagnosing Unsupported Device Types
+
+If an X-Sense device shows up with the wrong attributes, enable **Log raw device shadow data on each
+poll** in the app, click **Refresh Device Status**, and copy the `Raw shadow for <serial>` lines from
+the Hubitat log into a GitHub issue. Turn the option back off afterwards, as it logs every device on
+every poll.
 
 ## Technical Details
 
@@ -170,12 +174,3 @@ This integration polls for device status at a configurable interval:
 ## License
 
 Apache License 2.0
-
-## Credits
-
-- Developed with assistance from Claude AI
-- API insights from [python-xsense](https://github.com/Jarnsen/python-xsense)
-
-## Disclaimer
-
-This is an unofficial integration not affiliated with or endorsed by X-Sense. Use at your own risk. This should not replace your primary safety notification system.

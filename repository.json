@@ -3,7 +3,7 @@
   "gitHubUrl": "https://github.com/mathewbeall/hubitat-xsense-integration",
   "packages": [
     {
-      "name": "X-Sense Smoke/CO Detector Integration",
+      "name": "X-Sense Integration",
       "category": "Integrations",
       "tags": [
         "Cloud",

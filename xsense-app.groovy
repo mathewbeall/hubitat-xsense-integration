@@ -1,5 +1,5 @@
 /**
- *  X-Sense SBS50 Bridge Driver for Hubitat
+ *  X-Sense Integration for Hubitat
  *
  *  Copyright 2025
  *
@@ -8,12 +8,10 @@
  *
  *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  DEPRECATED in 2.0.0: the "X-Sense Integration" app (xsense-app.groovy) replaces this driver.
- *  It remains only so existing 1.x installs keep working until they migrate. See README "Upgrading from 1.x".
- *
  *  Description:
- *  Native Hubitat driver for X-Sense smart smoke/CO detectors and water leak sensors via the SBS50 bridge.
- *  Uses AWS Cognito SRP authentication to communicate with the X-Sense cloud API.
+ *  Parent app for X-Sense smart smoke/CO detectors and water leak sensors connected through an
+ *  SBS50 base station. Handles AWS Cognito SRP authentication, device discovery, and polling of
+ *  the AWS IoT Shadow API, and creates one child device per detector or sensor.
  *
  *  Supported devices: SC07-MR and other X-Sense Link+ compatible smoke/CO detectors,
  *                     SWS51 water leak sensors
@@ -22,59 +20,163 @@
 import groovy.json.JsonBuilder
 import groovy.json.JsonSlurper
 
-metadata {
-    definition(name: "X-Sense SBS50 Bridge", namespace: "xsense", author: "Community") {
-        capability "Refresh"
-        capability "Initialize"
+definition(
+    name: "X-Sense Integration",
+    namespace: "xsense",
+    author: "Mathew Beall",
+    description: "X-Sense smoke/CO detectors and water leak sensors via the SBS50 base station",
+    category: "Safety & Security",
+    iconUrl: "",
+    iconX2Url: "",
+    singleInstance: true,
+    documentationLink: "https://github.com/mathewbeall/hubitat-xsense-integration/blob/main/README.md",
+    importUrl: "https://raw.githubusercontent.com/mathewbeall/hubitat-xsense-integration/main/xsense-app.groovy"
+)
 
-        attribute "connectionStatus", "string"
-        attribute "lastUpdate", "string"
-        attribute "houseCount", "number"
-        attribute "stationCount", "number"
-        attribute "deviceCount", "number"
+preferences {
+    page(name: "mainPage")
+}
 
-        command "login"
-        command "discoverDevices"
-        command "recreateChildDevices"
+// ==================== UI ====================
+
+def mainPage() {
+    def installedApp = app.getInstallationState() == "COMPLETE"
+
+    dynamicPage(name: "mainPage", title: "X-Sense Integration", install: true, uninstall: true) {
+        if (!installedApp) {
+            section {
+                paragraph "Enter the email and password you use in the X-Sense phone app, then click " +
+                          "<b>Done</b>. The app will log in, discover your base station and sensors, and " +
+                          "create a Hubitat device for each one. Reopen the app afterwards to see status."
+            }
+        }
+
+        section("X-Sense Account") {
+            input name: "username", type: "text", title: "X-Sense Email", required: true, submitOnChange: true
+            input name: "password", type: "password", title: "X-Sense Password", required: true, submitOnChange: true
+            input name: "pollInterval", type: "enum", title: "Poll Interval",
+                  options: ["1": "1 Minute", "5": "5 Minutes", "10": "10 Minutes", "30": "30 Minutes"],
+                  defaultValue: "5", required: true
+        }
+
+        if (installedApp) {
+            section("Status") {
+                paragraph statusHtml()
+            }
+
+            section("Actions") {
+                paragraph "Actions run in the background. Refresh this page after a few seconds to see the result."
+                input name: "btnLogin", type: "button", title: "Log In and Discover Devices", width: 4
+                input name: "btnRefresh", type: "button", title: "Refresh Device Status", width: 4
+                input name: "btnRecreate", type: "button", title: "Recreate Child Devices", width: 4
+                paragraph "<small><b>Recreate Child Devices</b> deletes any child whose driver does not match its " +
+                          "X-Sense device type (for example a water leak sensor created as a smoke detector by an " +
+                          "older version) and re-runs discovery. Automations pointing at a deleted child must be " +
+                          "re-pointed at the new one.</small>"
+            }
+
+            section("Devices") {
+                paragraph devicesHtml()
+            }
+        }
+
+        section("Logging") {
+            input name: "enableDebug", type: "bool", title: "Enable Debug Logging", defaultValue: false
+            input name: "logRawShadow", type: "bool",
+                  title: "Log raw device shadow data on each poll (for diagnosing new device types)",
+                  defaultValue: false
+        }
+
+        section {
+            paragraph "<small>Child drivers required: <b>X-Sense Smoke/CO Detector</b> and " +
+                      "<b>X-Sense Water Leak Sensor</b>. Both are installed by Hubitat Package Manager.</small>"
+        }
     }
+}
 
-    preferences {
-        input name: "setupInfo", type: "paragraph", element: "paragraph",
-              title: "<b>Deprecated</b>",
-              description: "This bridge driver is replaced by the <b>X-Sense Integration</b> app (Apps > Add User App). " +
-                           "Set up the app, then delete this bridge device. Existing setup steps:<br>" +
-                           "1. Enter your X-Sense app email and password below and click <b>Save Preferences</b>.<br>" +
-                           "2. Click the <b>Initialize</b> command button at the top of this page.<br>" +
-                           "3. Your base station and detectors are discovered and a child device is created for each one.<br>" +
-                           "<br>If you upgraded from 1.0.x and have water leak sensors, click <b>Recreate Child Devices</b> " +
-                           "so they get the water sensor driver. See the README for details."
-        input name: "username", type: "text", title: "X-Sense Email", required: true
-        input name: "password", type: "password", title: "X-Sense Password", required: true
-        input name: "pollInterval", type: "enum", title: "Poll Interval",
-              options: ["1": "1 Minute", "5": "5 Minutes", "10": "10 Minutes", "30": "30 Minutes"],
-              defaultValue: "5"
-        input name: "enableDebug", type: "bool", title: "Enable Debug Logging", defaultValue: true
-        input name: "logRawShadow", type: "bool",
-              title: "Log raw device shadow data on each poll (for diagnosing new device types)",
-              defaultValue: false
+def statusHtml() {
+    def st = state.status ?: [:]
+    def rows = [
+        ["Connection", st.connectionStatus ?: "disconnected"],
+        ["Houses", st.houseCount ?: 0],
+        ["Base stations", st.stationCount ?: 0],
+        ["Devices", st.deviceCount ?: 0],
+        ["Last poll", st.lastUpdate ?: "never"],
+        ["Last error", state.lastError ?: "none"]
+    ]
+    def html = "<table style='width:100%'>"
+    rows.each { html += "<tr><td style='width:35%'><b>${it[0]}</b></td><td>${it[1]}</td></tr>" }
+    html += "</table>"
+    return html
+}
+
+def devicesHtml() {
+    def children = getChildDevices()
+    if (!children) {
+        return "No devices yet. Use <b>Log In and Discover Devices</b> above, or check the Hubitat log for errors."
+    }
+    def html = "<table style='width:100%'><tr><th style='text-align:left'>Device</th>" +
+               "<th style='text-align:left'>Type</th><th style='text-align:left'>Driver</th>" +
+               "<th style='text-align:left'>Status</th></tr>"
+    children.sort { it.displayName }.each { child ->
+        def sn = child.deviceNetworkId.replaceFirst("^${dniPrefix()}-", "")
+        def type = state.devices?.get(sn)?.type ?: child.getDataValue("deviceType") ?: "?"
+        def status = child.currentValue("water") ?: child.currentValue("smoke") ?: "?"
+        html += "<tr><td><a href='/device/edit/${child.id}' target='_blank'>${child.displayName}</a></td>" +
+                "<td>${type}</td><td>${child.typeName}</td><td>${status}</td></tr>"
+    }
+    html += "</table>"
+    return html
+}
+
+def appButtonHandler(String btn) {
+    switch (btn) {
+        case "btnLogin":
+            logInfo "Login and discovery requested from app page"
+            runInMillis(500, "login")
+            break
+        case "btnRefresh":
+            logInfo "Refresh requested from app page"
+            runInMillis(500, "refresh")
+            break
+        case "btnRecreate":
+            logInfo "Recreate child devices requested from app page"
+            runInMillis(500, "recreateChildDevices")
+            break
     }
 }
 
 // ==================== Lifecycle Methods ====================
 
 def installed() {
-    logInfo "X-Sense driver installed"
+    logInfo "X-Sense app installed"
     initialize()
 }
 
 def updated() {
-    logInfo "X-Sense driver updated"
-    unschedule()
+    logInfo "X-Sense app updated"
+    if (state.credKey == credentialKey() && checkTokenValid()) {
+        // Only logging or poll interval changed; keep the session and just reschedule polling
+        logInfo "Credentials unchanged, rescheduling polling"
+        unschedule()
+        schedulePolling()
+        return
+    }
     initialize()
 }
 
+/** Opaque key used to detect a credential change between Done clicks. */
+def credentialKey() {
+    return "${username}|${password}".toString().hashCode().toString()
+}
+
+def uninstalled() {
+    logInfo "X-Sense app uninstalled; child devices are removed by the hub"
+}
+
 def initialize() {
-    logInfo "Initializing X-Sense driver"
+    logInfo "Initializing X-Sense app"
+    unschedule()
     state.clear()
     state.accessToken = null
     state.idToken = null
@@ -87,10 +189,12 @@ def initialize() {
     state.houses = [:]
     state.stations = [:]
     state.devices = [:]
+    state.status = [:]
+    state.credKey = credentialKey()
 
-    sendEvent(name: "connectionStatus", value: "disconnected")
+    setStatus("connectionStatus", "disconnected")
 
-    if (username && password) {
+    if (hasCredentials()) {
         runIn(5, "login")
     } else {
         logWarn "Please configure X-Sense credentials"
@@ -109,6 +213,24 @@ def refresh() {
     }
 }
 
+/** Called by the smoke/CO child driver's testAlarm command. */
+def testAlarm(String serialNumber) {
+    logWarn "Remote alarm test is not supported by the X-Sense cloud API (requested for ${serialNumber})"
+}
+
+// ==================== Status Helpers ====================
+
+/** Stores a status value for display on the app page (replaces the old bridge device attributes). */
+def setStatus(String name, value) {
+    if (state.status == null) state.status = [:]
+    state.status[name] = value
+}
+
+/** Prefix for child device network IDs; unique per app instance. */
+def dniPrefix() {
+    return "xsense-${app.id}"
+}
+
 // ==================== Authentication ====================
 
 def login() {
@@ -117,7 +239,7 @@ def login() {
         return
     }
     logInfo "Starting X-Sense login"
-    sendEvent(name: "connectionStatus", value: "connecting")
+    setStatus("connectionStatus", "connecting")
     getClientInfo()
 }
 
@@ -152,13 +274,13 @@ def getClientInfo() {
                     startSrpAuth()
                 } else {
                     logError "API error: ${data.reCode} - ${data.reMsg}"
-                    sendEvent(name: "connectionStatus", value: "error")
+                    setStatus("connectionStatus", "error")
                 }
             }
         }
     } catch (e) {
         logError "Failed to get client info: ${e.message}"
-        sendEvent(name: "connectionStatus", value: "error")
+        setStatus("connectionStatus", "error")
     }
 }
 
@@ -219,15 +341,15 @@ def startSrpAuth() {
                 handlePasswordVerifierChallenge(data)
             } else {
                 logError "Unexpected challenge: ${data.ChallengeName}"
-                sendEvent(name: "connectionStatus", value: "error")
+                setStatus("connectionStatus", "error")
             }
         }
     } catch (groovyx.net.http.HttpResponseException e) {
         logError "SRP auth failed: ${e.message}"
-        sendEvent(name: "connectionStatus", value: "error")
+        setStatus("connectionStatus", "error")
     } catch (e) {
         logError "SRP auth failed: ${e.message}"
-        sendEvent(name: "connectionStatus", value: "error")
+        setStatus("connectionStatus", "error")
     }
 }
 
@@ -314,7 +436,7 @@ def handlePasswordVerifierChallenge(Map challengeData) {
                 handleAuthSuccess(data.AuthenticationResult)
             } else {
                 logError "Auth failed - no result: ${data}"
-                sendEvent(name: "connectionStatus", value: "error")
+                setStatus("connectionStatus", "error")
             }
         }
     } catch (groovyx.net.http.HttpResponseException e) {
@@ -325,10 +447,10 @@ def handlePasswordVerifierChallenge(Map challengeData) {
         } catch (e2) {
             logError "Could not read error: ${e2.message}"
         }
-        sendEvent(name: "connectionStatus", value: "error")
+        setStatus("connectionStatus", "error")
     } catch (e) {
         logError "Challenge response failed: ${e.message}"
-        sendEvent(name: "connectionStatus", value: "error")
+        setStatus("connectionStatus", "error")
     }
 }
 
@@ -340,8 +462,7 @@ def handleAuthSuccess(Map result) {
     state.refreshToken = result.RefreshToken
     state.tokenExpiry = now() + ((result.ExpiresIn ?: 3600) * 1000)
 
-    sendEvent(name: "connectionStatus", value: "connected")
-
+    setStatus("connectionStatus", "connected")
     // Get AWS tokens and discover devices
     getAwsTokens()
     schedulePolling()
@@ -712,7 +833,7 @@ def getHouses() {
                         ]
                         logInfo "Found house: ${house.houseName} (${house.houseId})"
                     }
-                    sendEvent(name: "houseCount", value: state.houses.size())
+                    setStatus("houseCount", state.houses.size())
                     logInfo "Found ${state.houses.size()} house(s)"
 
                     state.houses.each { houseId, house ->
@@ -773,7 +894,7 @@ def getStations(String houseId) {
                             processDevice(stationId, device)
                         }
                     }
-                    sendEvent(name: "stationCount", value: state.stations.size())
+                    setStatus("stationCount", state.stations.size())
                     logInfo "Found ${state.stations.size()} station(s) total"
                 } else {
                     logError "Failed to get stations: ${data.reCode} - ${data.reMsg}"
@@ -785,24 +906,24 @@ def getStations(String houseId) {
     }
 }
 
-def processDevice(String stationId, Map device) {
-    def deviceSn = device.deviceSn ?: device.deviceId
-    def deviceType = device.deviceType
-    def deviceName = device.deviceName ?: "X-Sense Device"
+def processDevice(String stationId, Map dev) {
+    def deviceSn = dev.deviceSn ?: dev.deviceId
+    def deviceType = dev.deviceType
+    def deviceName = dev.deviceName ?: "X-Sense Device"
 
     logInfo "Processing device: ${deviceName} (${deviceSn}) type: ${deviceType}"
 
     state.devices[deviceSn] = [
         stationId: stationId,
-        deviceId: device.deviceId,
+        deviceId: dev.deviceId,
         name: deviceName,
         type: deviceType,
-        roomId: device.roomId,
+        roomId: dev.roomId,
         lastUpdate: now()
     ]
 
     createChildDevice(deviceSn, deviceName, deviceType)
-    sendEvent(name: "deviceCount", value: state.devices.size())
+    setStatus("deviceCount", state.devices.size())
 }
 
 // ==================== Child Device Management ====================
@@ -837,13 +958,13 @@ def isMismatchedXsenseChild(child, String wantedDriver) {
 }
 
 def createChildDevice(String deviceId, String deviceName, String deviceType) {
-    def dni = "${device.deviceNetworkId}-${deviceId}"
+    def dni = "${dniPrefix()}-${deviceId}"
     def childDevice = getChildDevice(dni)
     def driverName = childDriverForType(deviceType)
 
     if (childDevice && isMismatchedXsenseChild(childDevice, driverName)) {
         logWarn "Child '${childDevice.displayName}' (${deviceType}) uses driver '${childDevice.typeName}' " +
-                "but should use '${driverName}'. Run the 'Recreate Child Devices' command to fix it."
+                "but should use '${driverName}'. Use 'Recreate Child Devices' in the X-Sense app to fix it."
     }
 
     if (!childDevice) {
@@ -890,7 +1011,7 @@ def recreateChildDevices() {
 
     def removed = 0
     state.devices.each { deviceSn, info ->
-        def dni = "${device.deviceNetworkId}-${deviceSn}"
+        def dni = "${dniPrefix()}-${deviceSn}"
         def child = getChildDevice(dni)
         if (!child) return
         def wanted = childDriverForType(info.type)
@@ -951,7 +1072,7 @@ def pollDevices() {
     }
 
     logInfo "Polled ${deviceCount} device(s)"
-    sendEvent(name: "lastUpdate", value: new Date().format("yyyy-MM-dd HH:mm:ss"))
+    setStatus("lastUpdate", new Date().format("yyyy-MM-dd HH:mm:ss"))
 }
 
 // ==================== AWS IoT Shadow API ====================
@@ -1065,7 +1186,7 @@ def shadowField(Map deviceData, String key) {
 }
 
 def updateChildDevice(String deviceSn, Map deviceData) {
-    def dni = "${device.deviceNetworkId}-${deviceSn}"
+    def dni = "${dniPrefix()}-${deviceSn}"
     def childDevice = getChildDevice(dni)
     if (!childDevice) return
 
@@ -1116,7 +1237,6 @@ def sendSharedEvents(childDevice, Map deviceData) {
     def rssi = rssiDbm(deviceData)
     if (rssi != null) {
         childDevice.sendEvent(name: "rssi", value: rssi, unit: "dBm")
-
         def signalStr = "unknown"
         if (rssi >= -50) signalStr = "excellent"
         else if (rssi >= -60) signalStr = "good"
@@ -1148,14 +1268,12 @@ def updateSmokeChild(childDevice, Map deviceData) {
         smokeStatus = "detected"
     }
     childDevice.sendEvent(name: "smoke", value: smokeStatus)
-
     // CO status - check both alarmStatus and coLevel
     def coStatus = "clear"
     if (alarmStatus == 2 || alarmStatus == 3 || coLevel > 0) {
         coStatus = "detected"
     }
     childDevice.sendEvent(name: "carbonMonoxide", value: coStatus)
-
     // Update CO PPM if available
     def coPpm = shadowField(deviceData, "coPpm")
     if (coPpm != null) {
@@ -1304,4 +1422,5 @@ def logWarn(msg) {
 
 def logError(msg) {
     log.error "[X-Sense] ${msg}"
+    state.lastError = "${new Date().format("yyyy-MM-dd HH:mm:ss")} - ${msg}"
 }
