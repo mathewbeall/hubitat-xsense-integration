@@ -36,6 +36,13 @@ metadata {
     }
 
     preferences {
+        input name: "setupInfo", type: "paragraph", element: "paragraph",
+              title: "<b>Setup</b>",
+              description: "1. Enter your X-Sense app email and password below and click <b>Save Preferences</b>.<br>" +
+                           "2. Click the <b>Initialize</b> command button at the top of this page.<br>" +
+                           "3. Your base station and detectors are discovered and a child device is created for each one.<br>" +
+                           "<br>If you upgraded from 1.0.x and have water leak sensors, click <b>Recreate Child Devices</b> " +
+                           "so they get the water sensor driver. See the README for details."
         input name: "username", type: "text", title: "X-Sense Email", required: true
         input name: "password", type: "password", title: "X-Sense Password", required: true
         input name: "pollInterval", type: "enum", title: "Poll Interval",

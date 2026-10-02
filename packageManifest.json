@@ -1,10 +1,10 @@
 {
   "packageName": "X-Sense Smoke/CO Detector Integration",
   "author": "Mathew Beall",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "minimumHEVersion": "2.2.4",
   "dateReleased": "2026-10-02",
-  "releaseNotes": "v1.1.0: Add support for X-Sense water leak sensors (SWS51) as 'X-Sense Water Leak Sensor' child devices. Child driver is now chosen by device type. New 'Recreate Child Devices' command fixes leak sensors previously created as smoke detectors. New 'Log raw device shadow data' preference for diagnosing new device types.",
+  "releaseNotes": "SETUP (drivers only, nothing appears under Apps): after install go to Devices > Add Device > Virtual, set Type to 'X-Sense SBS50 Bridge', Save Device, enter your X-Sense email/password in Preferences, Save Preferences, then click Initialize. Child devices are created automatically.\n\nv1.1.1: Add setup instructions to the bridge device preferences and release notes.\nv1.1.0: Add support for X-Sense water leak sensors (SWS51) as 'X-Sense Water Leak Sensor' child devices. Child driver is now chosen by device type. New 'Recreate Child Devices' command fixes leak sensors previously created as smoke detectors. New 'Log raw device shadow data' preference for diagnosing new device types.",
   "documentationLink": "https://github.com/mathewbeall/hubitat-xsense-integration/blob/main/README.md",
   "communityLink": "https://github.com/mathewbeall/hubitat-xsense-integration",
   "drivers": [
