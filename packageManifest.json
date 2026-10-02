@@ -1,10 +1,10 @@
 {
   "packageName": "X-Sense Integration",
   "author": "Mathew Beall",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "minimumHEVersion": "2.2.4",
   "dateReleased": "2026-10-02",
-  "releaseNotes": "v2.0.1: Remove the deprecated 1.x bridge driver from the package.\n\nUPGRADING FROM 1.x: version 2.0 is an app, not a virtual device, so do not use HPM Update. Instead: (1) delete your old 'X-Sense Bridge' virtual device, which removes its child devices; (2) in HPM choose Uninstall and remove the old X-Sense package; (3) in HPM choose Install and install X-Sense Integration; (4) go to Apps > Add User App > X-Sense Integration, enter your X-Sense email and password, click Done; (5) re-point rules and HSM at the new child devices.\n\nNEW INSTALL: after HPM finishes, go to Apps > Add User App > X-Sense Integration, enter your X-Sense email and password, and click Done. Devices are created automatically.\n\nv2.0.0: Integration converted to an app with a setup/status page. Water leak sensor (SWS51) support, driver chosen by device type, Recreate Child Devices action, raw shadow logging option.",
+  "releaseNotes": "v2.0.2: Skip an automatic poll if another poll ran in the last 30 seconds, so the first scheduled poll no longer doubles up with the post-setup refresh. Manual Refresh always runs.\n\nv2.0.1: Remove the deprecated 1.x bridge driver from the package.\n\nUPGRADING FROM 1.x: version 2.0 is an app, not a virtual device, so do not use HPM Update. Instead: (1) delete your old 'X-Sense Bridge' virtual device, which removes its child devices; (2) in HPM choose Uninstall and remove the old X-Sense package; (3) in HPM choose Install and install X-Sense Integration; (4) go to Apps > Add User App > X-Sense Integration, enter your X-Sense email and password, click Done; (5) re-point rules and HSM at the new child devices.\n\nNEW INSTALL: after HPM finishes, go to Apps > Add User App > X-Sense Integration, enter your X-Sense email and password, and click Done. Devices are created automatically.\n\nv2.0.0: Integration converted to an app with a setup/status page. Water leak sensor (SWS51) support, driver chosen by device type, Recreate Child Devices action, raw shadow logging option.",
   "documentationLink": "https://github.com/mathewbeall/hubitat-xsense-integration/blob/main/README.md",
   "communityLink": "https://github.com/mathewbeall/hubitat-xsense-integration",
   "apps": [

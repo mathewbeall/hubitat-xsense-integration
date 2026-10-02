@@ -207,7 +207,7 @@ def refresh() {
         return
     }
     if (checkTokenValid()) {
-        pollDevices()
+        pollDevices(true)
     } else {
         login()
     }
@@ -1056,11 +1056,26 @@ def schedulePolling() {
     }
 }
 
-def pollDevices() {
+@groovy.transform.Field static final long MIN_AUTO_POLL_GAP_MS = 30000L
+
+/**
+ * Polls every station's shadow and updates child devices.
+ * Automatic polls (initial refresh, recurring schedule) are skipped if another poll ran within the
+ * last 30 seconds, since the schedule's first fire can land right after the initial refresh.
+ * A manual refresh passes force = true and always runs.
+ */
+def pollDevices(force = false) {
     if (!checkTokenValid()) {
         login()
         return
     }
+
+    def lastPoll = (state.lastPollMs ?: 0L) as Long
+    if (!force && (now() - lastPoll) < MIN_AUTO_POLL_GAP_MS) {
+        logDebug "Skipping automatic poll, last poll was ${(now() - lastPoll) / 1000}s ago"
+        return
+    }
+    state.lastPollMs = now()
 
     // Poll each station for device status via shadow API
     def deviceCount = 0
