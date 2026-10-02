@@ -1,11 +1,12 @@
 # X-Sense Hubitat Integration
 
-Native Hubitat driver for X-Sense smart smoke/CO detectors via the SBS50 bridge.
+Native Hubitat driver for X-Sense smart smoke/CO detectors and water leak sensors via the SBS50 bridge.
 
 ## Supported Devices
 
 - **Bridge**: X-Sense SBS50 Base Station
-- **Detectors**: SC07-MR (Smoke + CO Combo) and other Link+ compatible devices
+- **Smoke/CO Detectors**: SC07-MR (Smoke + CO Combo) and other Link+ compatible devices
+- **Water Leak Sensors**: SWS51 (paired to the SBS50)
 
 ## Requirements
 
@@ -30,7 +31,7 @@ Native Hubitat driver for X-Sense smart smoke/CO detectors via the SBS50 bridge.
 2. Click **+ New Driver**
 3. Paste the contents of `xsense-hubitat-driver.groovy`
 4. Click **Save**
-5. Repeat for `xsense-detector-child.groovy`
+5. Repeat for `xsense-detector-child.groovy` and `xsense-water-child.groovy`
 
 ## Setup
 
@@ -50,21 +51,23 @@ Native Hubitat driver for X-Sense smart smoke/CO detectors via the SBS50 bridge.
 
 1. The driver authenticates with X-Sense using AWS Cognito SRP (Secure Remote Password)
 2. Once authenticated, it fetches your houses, stations (bridges), and devices
-3. For each detector, a child device is created automatically
+3. For each device, a child device is created automatically using the driver that matches its type (smoke/CO detector or water leak sensor)
 4. The driver polls the AWS IoT Shadow API for real-time device status
 
 ## Child Devices
 
-Each detector gets its own child device with:
+### Smoke/CO Detectors
 
-### Capabilities
+Each detector gets its own "X-Sense Smoke/CO Detector" child device with:
+
+#### Capabilities
 - **Smoke Detector**: `smoke` attribute (clear/detected)
 - **Carbon Monoxide Detector**: `carbonMonoxide` attribute (clear/detected)
 - **Battery**: Battery level percentage (0%, 33%, 66%, 100%)
 - **Temperature** (if supported by device)
 - **Humidity** (if supported by device)
 
-### Attributes
+#### Attributes
 - `carbonMonoxideLevel`: CO level in PPM
 - `alarmState`: Current alarm state (idle/smoke/carbonMonoxide/muted)
 - `signalStrength`: Connection quality (excellent/good/fair/poor)
@@ -73,16 +76,46 @@ Each detector gets its own child device with:
 - `deviceStatus`: Online/offline status
 - `lastChecked`: Timestamp of last status update
 
-### Commands
+#### Commands
 - **Refresh**: Request immediate status update
+
+### Water Leak Sensors
+
+Each SWS51 gets its own "X-Sense Water Leak Sensor" child device with:
+
+#### Capabilities
+- **Water Sensor**: `water` attribute (dry/wet)
+- **Battery**: Battery level percentage (0%, 33%, 66%, 100%)
+
+#### Attributes
+- `alarmState`: idle/water/muted
+- `muteStatus`: muted/notMuted (alarm silenced from the sensor or app)
+- `signalStrength`, `rssi`, `healthStatus`, `deviceStatus`, `lastChecked`: same as detectors
+
+### Upgrading from 1.0.x with Water Leak Sensors
+
+Versions before 1.1.0 created every device as a smoke/CO detector. Hubitat does not allow a
+parent driver to change a child's driver in place, so after upgrading:
+
+1. Open the bridge device and click **Recreate Child Devices**
+2. Any child whose driver does not match its device type is deleted and recreated
+
+Automations that referenced the old child devices will need to be re-pointed at the new ones.
+
+### Diagnosing Unsupported Device Types
+
+If you have an X-Sense device that shows up with the wrong attributes, enable
+**Log raw device shadow data on each poll** in the bridge preferences, click **Refresh**, and
+copy the `Raw shadow for <serial>` lines from the Hubitat log into a GitHub issue. Turn the
+preference back off afterwards, as it logs every device on every poll.
 
 ## Integration with Hubitat Safety Monitor
 
 You can use these devices with HSM (Hubitat Safety Monitor):
 
 1. Go to **Apps** → **Hubitat Safety Monitor**
-2. Under **Configure** → **Smoke**
-3. Select your X-Sense detectors
+2. Under **Configure** → **Smoke**, select your X-Sense detectors
+3. Under **Configure** → **Water**, select your X-Sense water leak sensors
 
 ## Polling Interval
 

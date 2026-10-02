@@ -1,10 +1,10 @@
 {
   "packageName": "X-Sense Smoke/CO Detector Integration",
   "author": "Mathew Beall",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "minimumHEVersion": "2.2.4",
-  "dateReleased": "2026-01-20",
-  "releaseNotes": "v1.0.3: Auto-refresh AWS credentials on 403 errors instead of requiring manual re-login.",
+  "dateReleased": "2026-10-02",
+  "releaseNotes": "v1.1.0: Add support for X-Sense water leak sensors (SWS51) as 'X-Sense Water Leak Sensor' child devices. Child driver is now chosen by device type. New 'Recreate Child Devices' command fixes leak sensors previously created as smoke detectors. New 'Log raw device shadow data' preference for diagnosing new device types.",
   "documentationLink": "https://github.com/mathewbeall/hubitat-xsense-integration/blob/main/README.md",
   "communityLink": "https://github.com/mathewbeall/hubitat-xsense-integration",
   "drivers": [
@@ -21,6 +21,13 @@
       "name": "X-Sense Smoke/CO Detector",
       "namespace": "xsense",
       "location": "https://raw.githubusercontent.com/mathewbeall/hubitat-xsense-integration/main/xsense-detector-child.groovy",
+      "required": true
+    },
+    {
+      "id": "xsense-water-sensor",
+      "name": "X-Sense Water Leak Sensor",
+      "namespace": "xsense",
+      "location": "https://raw.githubusercontent.com/mathewbeall/hubitat-xsense-integration/main/xsense-water-child.groovy",
       "required": true
     }
   ]

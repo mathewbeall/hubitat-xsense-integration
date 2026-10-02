@@ -9,10 +9,11 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  *
  *  Description:
- *  Native Hubitat driver for X-Sense smart smoke/CO detectors via the SBS50 bridge.
+ *  Native Hubitat driver for X-Sense smart smoke/CO detectors and water leak sensors via the SBS50 bridge.
  *  Uses AWS Cognito SRP authentication to communicate with the X-Sense cloud API.
  *
- *  Supported devices: SC07-MR and other X-Sense Link+ compatible detectors
+ *  Supported devices: SC07-MR and other X-Sense Link+ compatible smoke/CO detectors,
+ *                     SWS51 water leak sensors
  */
 
 import groovy.json.JsonBuilder
@@ -31,6 +32,7 @@ metadata {
 
         command "login"
         command "discoverDevices"
+        command "recreateChildDevices"
     }
 
     preferences {
@@ -40,6 +42,9 @@ metadata {
               options: ["1": "1 Minute", "5": "5 Minutes", "10": "10 Minutes", "30": "30 Minutes"],
               defaultValue: "5"
         input name: "enableDebug", type: "bool", title: "Enable Debug Logging", defaultValue: true
+        input name: "logRawShadow", type: "bool",
+              title: "Log raw device shadow data on each poll (for diagnosing new device types)",
+              defaultValue: false
     }
 }
 
@@ -788,23 +793,61 @@ def processDevice(String stationId, Map device) {
     sendEvent(name: "deviceCount", value: state.devices.size())
 }
 
+// ==================== Child Device Management ====================
+
+@groovy.transform.Field static final String SMOKE_DRIVER = "X-Sense Smoke/CO Detector"
+@groovy.transform.Field static final String WATER_DRIVER = "X-Sense Water Leak Sensor"
+
+/**
+ * Returns true for X-Sense water leak sensors (SWS51 and similar).
+ * Device type strings from the X-Sense API look like "SC07-MR", "XC01-M", "SWS51".
+ */
+def isWaterSensorType(String deviceType) {
+    return deviceType?.toUpperCase()?.startsWith("SWS")
+}
+
+/**
+ * Picks the child driver name for a given X-Sense device type.
+ * Unknown types fall back to the smoke/CO driver, which is the historical behavior.
+ */
+def childDriverForType(String deviceType) {
+    if (isWaterSensorType(deviceType)) return WATER_DRIVER
+    return SMOKE_DRIVER
+}
+
+/**
+ * True when the child runs one of our own X-Sense drivers but not the one its device type calls for.
+ * Children on generic fallback drivers are left alone.
+ */
+def isMismatchedXsenseChild(child, String wantedDriver) {
+    def current = child.typeName
+    return (current == SMOKE_DRIVER || current == WATER_DRIVER) && current != wantedDriver
+}
+
 def createChildDevice(String deviceId, String deviceName, String deviceType) {
     def dni = "${device.deviceNetworkId}-${deviceId}"
     def childDevice = getChildDevice(dni)
+    def driverName = childDriverForType(deviceType)
+
+    if (childDevice && isMismatchedXsenseChild(childDevice, driverName)) {
+        logWarn "Child '${childDevice.displayName}' (${deviceType}) uses driver '${childDevice.typeName}' " +
+                "but should use '${driverName}'. Run the 'Recreate Child Devices' command to fix it."
+    }
 
     if (!childDevice) {
-        logInfo "Creating child device: ${deviceName}"
+        logInfo "Creating child device: ${deviceName} (${deviceType}) using driver '${driverName}'"
 
         try {
-            childDevice = addChildDevice("xsense", "X-Sense Smoke/CO Detector", dni, [
+            childDevice = addChildDevice("xsense", driverName, dni, [
                 name: deviceName,
                 label: deviceName,
                 isComponent: false
             ])
         } catch (e) {
-            logWarn "Custom driver not found, using generic: ${e.message}"
+            logWarn "Driver '${driverName}' not found, using generic: ${e.message}"
+            def genericDriver = isWaterSensorType(deviceType) ? "Virtual Moisture Sensor" : "Virtual Smoke Detector"
             try {
-                childDevice = addChildDevice("hubitat", "Virtual Smoke Detector", dni, [
+                childDevice = addChildDevice("hubitat", genericDriver, dni, [
                     name: deviceName,
                     label: deviceName,
                     isComponent: false
@@ -816,16 +859,45 @@ def createChildDevice(String deviceId, String deviceName, String deviceType) {
     }
 
     if (childDevice) {
-        def deviceData = state.devices[deviceId]
-        if (deviceData) {
-            childDevice.sendEvent(name: "battery", value: deviceData.battery ?: 100, unit: "%")
-
-            def smokeStatus = (deviceData.status?.smoke == 1) ? "detected" : "clear"
-            def coStatus = (deviceData.status?.co == 1) ? "detected" : "clear"
-
-            childDevice.sendEvent(name: "smoke", value: smokeStatus)
-            childDevice.sendEvent(name: "carbonMonoxide", value: coStatus)
+        if (childDevice.hasCommand("setDeviceInfo")) {
+            childDevice.setDeviceInfo([serialNumber: deviceId, deviceType: deviceType])
         }
+    }
+}
+
+/**
+ * Deletes any child device whose driver no longer matches its X-Sense device type
+ * (for example a water leak sensor created as a smoke detector by an older version),
+ * then re-runs discovery so it is recreated with the correct driver.
+ */
+def recreateChildDevices() {
+    if (!state.devices) {
+        logWarn "No devices known yet. Run Initialize or Discover Devices first."
+        return
+    }
+
+    def removed = 0
+    state.devices.each { deviceSn, info ->
+        def dni = "${device.deviceNetworkId}-${deviceSn}"
+        def child = getChildDevice(dni)
+        if (!child) return
+        def wanted = childDriverForType(info.type)
+        if (isMismatchedXsenseChild(child, wanted)) {
+            logInfo "Removing child '${child.displayName}' (driver '${child.typeName}', wanted '${wanted}')"
+            try {
+                deleteChildDevice(dni)
+                removed++
+            } catch (e) {
+                logError "Failed to delete child ${dni}: ${e.message}"
+            }
+        }
+    }
+
+    logInfo "Removed ${removed} mismatched child device(s); re-running discovery"
+    if (checkTokenValid()) {
+        discoverDevices()
+    } else {
+        login()
     }
 }
 
@@ -961,8 +1033,23 @@ def getStationShadow(String stationSn, Map station, Map house) {
 
 def parseDeviceStatus(String stationSn, Map reported) {
     reported.devs?.each { deviceSn, deviceData ->
+        if (logRawShadow) {
+            log.info "[X-Sense] Raw shadow for ${deviceSn}: ${new JsonBuilder(deviceData).toString()}"
+        }
         updateChildDevice(deviceSn, deviceData)
     }
+}
+
+/**
+ * Looks up a shadow field either at the top level of the device entry or inside its
+ * nested "status" map. Different X-Sense device types place fields in different spots.
+ */
+def shadowField(Map deviceData, String key) {
+    if (deviceData == null) return null
+    if (deviceData.containsKey(key)) return deviceData[key]
+    def status = deviceData.status
+    if (status instanceof Map && status.containsKey(key)) return status[key]
+    return null
 }
 
 def updateChildDevice(String deviceSn, Map deviceData) {
@@ -970,17 +1057,78 @@ def updateChildDevice(String deviceSn, Map deviceData) {
     def childDevice = getChildDevice(dni)
     if (!childDevice) return
 
-    // Update battery level - batInfo is 0-3 (bars), convert to percentage
-    if (deviceData.batInfo != null) {
-        def batLevel = deviceData.batInfo as Integer
-        def batteryMap = [0: 0, 1: 33, 2: 66, 3: 100]
-        childDevice.sendEvent(name: "battery", value: batteryMap[batLevel] ?: 0, unit: "%")
+    // Prefer the type reported in the shadow, fall back to what discovery told us
+    def deviceType = (shadowField(deviceData, "type") ?: state.devices[deviceSn]?.type) as String
+
+    if (isWaterSensorType(deviceType) || childDevice.typeName == WATER_DRIVER) {
+        updateWaterChild(childDevice, deviceData)
+    } else {
+        updateSmokeChild(childDevice, deviceData)
     }
 
-    // Update smoke/CO status from alarmStatus in status object
+    // Update lastChecked timestamp
+    childDevice.sendEvent(name: "lastChecked", value: new Date().format("yyyy-MM-dd HH:mm:ss"))
+}
+
+// ---------- Shared field helpers ----------
+
+/** batInfo is 0-3 (bars); returns percentage or null */
+def batteryPercent(Map deviceData) {
+    def batInfo = shadowField(deviceData, "batInfo")
+    if (batInfo == null) return null
+    def batteryMap = [0: 0, 1: 33, 2: 66, 3: 100]
+    return batteryMap[batInfo as Integer] ?: 0
+}
+
+/** rfLevel is 0-3 (bars); returns approximate dBm or null */
+def rssiDbm(Map deviceData) {
+    def rfLevel = shadowField(deviceData, "rfLevel")
+    if (rfLevel == null) return null
+    def rssiMap = [0: -90, 1: -70, 2: -50, 3: -30]
+    return rssiMap[rfLevel as Integer] ?: -90
+}
+
+/** online is 0/1; returns Boolean or null */
+def isOnline(Map deviceData) {
+    def online = shadowField(deviceData, "online")
+    if (online == null) return null
+    return (online as Integer) == 1
+}
+
+def sendSharedEvents(childDevice, Map deviceData) {
+    def battery = batteryPercent(deviceData)
+    if (battery != null) {
+        childDevice.sendEvent(name: "battery", value: battery, unit: "%")
+    }
+
+    def rssi = rssiDbm(deviceData)
+    if (rssi != null) {
+        childDevice.sendEvent(name: "rssi", value: rssi, unit: "dBm")
+
+        def signalStr = "unknown"
+        if (rssi >= -50) signalStr = "excellent"
+        else if (rssi >= -60) signalStr = "good"
+        else if (rssi >= -70) signalStr = "fair"
+        else signalStr = "poor"
+        childDevice.sendEvent(name: "signalStrength", value: signalStr)
+    }
+
+    def online = isOnline(deviceData)
+    if (online != null) {
+        def status = online ? "online" : "offline"
+        childDevice.sendEvent(name: "healthStatus", value: status)
+        childDevice.sendEvent(name: "deviceStatus", value: status)
+    }
+}
+
+// ---------- Smoke / CO detectors ----------
+
+def updateSmokeChild(childDevice, Map deviceData) {
+    sendSharedEvents(childDevice, deviceData)
+
     // alarmStatus: 0 = clear, 1 = smoke alarm, 2 = CO alarm, 3 = both?
-    def alarmStatus = (deviceData.status?.alarmStatus ?: 0) as Integer
-    def coLevel = (deviceData.coLevel ?: 0) as Integer
+    def alarmStatus = (shadowField(deviceData, "alarmStatus") ?: 0) as Integer
+    def coLevel = (shadowField(deviceData, "coLevel") ?: 0) as Integer
 
     // Smoke status
     def smokeStatus = "clear"
@@ -997,48 +1145,55 @@ def updateChildDevice(String deviceSn, Map deviceData) {
     childDevice.sendEvent(name: "carbonMonoxide", value: coStatus)
 
     // Update CO PPM if available
-    if (deviceData.coPpm != null) {
-        childDevice.sendEvent(name: "carbonMonoxideLevel", value: deviceData.coPpm, unit: "ppm")
+    def coPpm = shadowField(deviceData, "coPpm")
+    if (coPpm != null) {
+        childDevice.sendEvent(name: "carbonMonoxideLevel", value: coPpm, unit: "ppm")
     }
 
     // Update temperature if available
-    if (deviceData.temperature != null) {
-        childDevice.sendEvent(name: "temperature", value: deviceData.temperature, unit: "°F")
+    def temperature = shadowField(deviceData, "temperature")
+    if (temperature != null) {
+        childDevice.sendEvent(name: "temperature", value: temperature, unit: "°F")
     }
 
     // Update humidity if available
-    if (deviceData.humidity != null) {
-        childDevice.sendEvent(name: "humidity", value: deviceData.humidity, unit: "%")
+    def humidity = shadowField(deviceData, "humidity")
+    if (humidity != null) {
+        childDevice.sendEvent(name: "humidity", value: humidity, unit: "%")
     }
-
-    // Update signal strength - rfLevel is 0-3 (bars)
-    if (deviceData.rfLevel != null) {
-        def rfLevel = deviceData.rfLevel as Integer
-        def rssiMap = [0: -90, 1: -70, 2: -50, 3: -30]
-        def rssi = rssiMap[rfLevel] ?: -90
-        childDevice.sendEvent(name: "rssi", value: rssi, unit: "dBm")
-
-        def signalStr = "unknown"
-        if (rssi >= -50) signalStr = "excellent"
-        else if (rssi >= -60) signalStr = "good"
-        else if (rssi >= -70) signalStr = "fair"
-        else signalStr = "poor"
-        childDevice.sendEvent(name: "signalStrength", value: signalStr)
-    }
-
-    // Update online status
-    if (deviceData.online != null) {
-        def onlineVal = deviceData.online as Integer
-        def status = onlineVal == 1 ? "online" : "offline"
-        childDevice.sendEvent(name: "healthStatus", value: status)
-        childDevice.sendEvent(name: "deviceStatus", value: status)
-    }
-
-    // Update lastChecked timestamp
-    childDevice.sendEvent(name: "lastChecked", value: new Date().format("yyyy-MM-dd HH:mm:ss"))
 }
 
-// ==================== AWS Signature V4 ====================
+// ---------- Water leak sensors (SWS51) ----------
+
+def updateWaterChild(childDevice, Map deviceData) {
+    def waterAlarm = shadowField(deviceData, "waterAlarmStatus")
+    def waterMute = shadowField(deviceData, "waterMuteStatus")
+
+    if (childDevice.hasCommand("updateStatus")) {
+        // Our own water child driver: hand it a normalized map
+        def status = [:]
+        if (waterAlarm != null) status.water = (waterAlarm as Integer) == 1
+        if (waterMute != null) status.muted = (waterMute as Integer) == 1
+        def battery = batteryPercent(deviceData)
+        if (battery != null) status.battery = battery
+        def rssi = rssiDbm(deviceData)
+        if (rssi != null) status.rssi = rssi
+        def online = isOnline(deviceData)
+        if (online != null) status.online = online
+        childDevice.updateStatus(status)
+    } else {
+        // Generic fallback driver (e.g. Virtual Moisture Sensor): send raw events
+        sendSharedEvents(childDevice, deviceData)
+        if (waterAlarm != null) {
+            childDevice.sendEvent(name: "water", value: (waterAlarm as Integer) == 1 ? "wet" : "dry")
+        }
+    }
+
+    if (waterAlarm == null) {
+        logDebug "No waterAlarmStatus field for ${childDevice.displayName}; " +
+                 "enable 'Log raw device shadow data' to inspect the payload"
+    }
+}
 
 def signAwsRequest(String method, String url, String region, Map headers, String content) {
     def service = "iotdata"
