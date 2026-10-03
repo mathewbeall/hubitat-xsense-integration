@@ -14,8 +14,8 @@
  *
  *  The parent driver creates this child for any device whose X-Sense type begins with "SWS".
  *  Status comes from the base station shadow. Observed on real SWS51 hardware (2026-10-03):
- *  status.alarmStatus is 0 when dry and 1 when water is detected. status.muteStatus reads 1 on
- *  every sensor at rest, so its meaning is not yet known and it is exposed raw as muteCode.
+ *  status.alarmStatus is 0 when dry and 1 when water is detected. status.muteStatus is 1 normally
+ *  and drops to 0 while an active alarm has been silenced.
  */
 
 metadata {
@@ -33,8 +33,8 @@ metadata {
         attribute "serialNumber", "string"
         attribute "firmwareVersion", "string"
         attribute "deviceType", "string"
-        attribute "alarmState", "string"   // idle / water
-        attribute "muteCode", "number"      // raw X-Sense muteStatus value, meaning not yet confirmed
+        attribute "alarmState", "string"   // idle / water / muted
+        attribute "muteStatus", "string"   // muted / notMuted
         attribute "silenceTime", "number"   // raw X-Sense silenceTime value
     }
 
@@ -57,6 +57,7 @@ def updated() {
 def initialize() {
     sendEvent(name: "water", value: "dry")
     sendEvent(name: "alarmState", value: "idle")
+    sendEvent(name: "muteStatus", value: "notMuted")
     sendEvent(name: "deviceStatus", value: "unknown")
 }
 
@@ -72,7 +73,7 @@ def refresh() {
 /**
  * Accepts a normalized status map from the parent:
  *   water:       true/1 = wet, false/0 = dry
- *   muteCode:    raw muteStatus value from X-Sense
+ *   muted:       true/1 = active alarm has been silenced
  *   silenceTime: raw silenceTime value from X-Sense
  *   battery: percentage
  *   rssi:    dBm
@@ -81,13 +82,18 @@ def refresh() {
 def updateStatus(Map status) {
     logDebug "Updating status: ${status}"
 
+    // Work from the incoming values, not device.currentValue(): Hubitat may return the previous
+    // attribute value when it is read in the same execution that set it.
+    def wet = device.currentValue("water") == "wet"
     if (status.containsKey("water")) {
-        def wet = (status.water == 1 || status.water == true || status.water == "1")
+        wet = (status.water == 1 || status.water == true || status.water == "1")
         sendEvent(name: "water", value: wet ? "wet" : "dry")
     }
 
-    if (status.containsKey("muteCode")) {
-        sendEvent(name: "muteCode", value: status.muteCode)
+    def muted = device.currentValue("muteStatus") == "muted"
+    if (status.containsKey("muted")) {
+        muted = (status.muted == 1 || status.muted == true || status.muted == "1")
+        sendEvent(name: "muteStatus", value: muted ? "muted" : "notMuted")
     }
 
     if (status.containsKey("silenceTime")) {
@@ -115,8 +121,10 @@ def updateStatus(Map status) {
         sendEvent(name: "deviceStatus", value: onlineStr)
     }
 
-    // Derive alarmState from water
-    sendEvent(name: "alarmState", value: device.currentValue("water") == "wet" ? "water" : "idle")
+    // Derive alarmState from water + mute
+    def alarmState = "idle"
+    if (wet) alarmState = muted ? "muted" : "water"
+    sendEvent(name: "alarmState", value: alarmState)
 
     sendEvent(name: "lastChecked", value: new Date().format("yyyy-MM-dd HH:mm:ss"))
 }

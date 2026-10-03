@@ -32,7 +32,7 @@ metadata {
         attribute "serialNumber", "string"
         attribute "firmwareVersion", "string"
         attribute "deviceType", "string"
-        attribute "alarmState", "string"      // idle / alarm (reading outside configured range)
+        attribute "alarmState", "string"      // idle / lowTemperature / highTemperature / lowHumidity / highHumidity / alarm
         attribute "temperatureRangeLow", "number"
         attribute "temperatureRangeHigh", "number"
         attribute "humidityRangeLow", "number"
@@ -93,7 +93,7 @@ def updateStatus(Map status) {
 
     if (status.containsKey("alarm")) {
         def alarm = (status.alarm == 1 || status.alarm == true || status.alarm == "1")
-        sendEvent(name: "alarmState", value: alarm ? "alarm" : "idle")
+        sendEvent(name: "alarmState", value: alarm ? classifyAlarm(status) : "idle")
     }
 
     if (status.tempRange instanceof List && status.tempRange.size() == 2) {
@@ -128,6 +128,28 @@ def updateStatus(Map status) {
     }
 
     sendEvent(name: "lastChecked", value: new Date().format("yyyy-MM-dd HH:mm:ss"))
+}
+
+/**
+ * X-Sense only reports that an alarm is active. Work out which limit was crossed by comparing the
+ * readings in this update with the setpoint ranges. Falls back to "alarm" if nothing is out of range,
+ * which can happen when the reading recovers before the alarm flag clears.
+ */
+def classifyAlarm(Map status) {
+    def t = status.temperature != null ? status.temperature as BigDecimal : null
+    def h = status.humidity != null ? status.humidity as BigDecimal : null
+    def tr = (status.tempRange instanceof List && status.tempRange.size() == 2) ? status.tempRange : null
+    def hr = (status.humidityRange instanceof List && status.humidityRange.size() == 2) ? status.humidityRange : null
+
+    if (t != null && tr != null) {
+        if (t < (tr[0] as BigDecimal)) return "lowTemperature"
+        if (t > (tr[1] as BigDecimal)) return "highTemperature"
+    }
+    if (h != null && hr != null) {
+        if (h < (hr[0] as BigDecimal)) return "lowHumidity"
+        if (h > (hr[1] as BigDecimal)) return "highHumidity"
+    }
+    return "alarm"
 }
 
 def setDeviceInfo(Map info) {

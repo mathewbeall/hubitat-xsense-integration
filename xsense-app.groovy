@@ -1322,9 +1322,9 @@ def updateSmokeChild(childDevice, Map deviceData) {
 // ---------- Water leak sensors (SWS51) ----------
 
 def updateWaterChild(childDevice, Map deviceData) {
-    // Observed SWS51 shadow (2026-10-03): status.alarmStatus "0" dry / "1" wet, status.muteStatus "1" at
-    // rest on every sensor, status.silenceTime "0". The waterAlarmStatus name seen in other
-    // integrations is accepted too in case other models or firmware use it.
+    // Observed SWS51 shadow (2026-10-03): status.alarmStatus "0" dry / "1" wet. status.muteStatus is "1"
+    // normally and "0" while an active alarm is silenced (inverted from what the name suggests).
+    // The waterAlarmStatus name seen in other integrations is accepted too in case other models use it.
     def waterAlarm = shadowField(deviceData, "waterAlarmStatus")
     if (waterAlarm == null) waterAlarm = shadowField(deviceData, "alarmStatus")
     def muteCode = shadowField(deviceData, "waterMuteStatus")
@@ -1342,7 +1342,7 @@ def updateWaterChild(childDevice, Map deviceData) {
         // Our own water child driver: hand it a normalized map
         def status = [:]
         if (wet != null) status.water = wet
-        if (muteCode != null) status.muteCode = muteCode as Integer
+        if (muteCode != null && wet != null) status.muted = wet && (muteCode as Integer) == 0
         if (silenceTime != null) status.silenceTime = silenceTime as Integer
         def battery = batteryPercent(deviceData)
         if (battery != null) status.battery = battery

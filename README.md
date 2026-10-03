@@ -94,8 +94,9 @@ Each SWS51 gets an "X-Sense Water Leak Sensor" child device with:
 - **Battery**: Battery level percentage (0%, 33%, 66%, 100%)
 
 #### Attributes
-- `alarmState`: idle/water
-- `muteCode`, `silenceTime`: raw X-Sense values, exposed until their meaning is confirmed
+- `alarmState`: idle/water/muted
+- `muteStatus`: muted/notMuted (an active alarm silenced from the sensor or app)
+- `silenceTime`: raw X-Sense value
 - `signalStrength`, `rssi`, `healthStatus`, `deviceStatus`, `lastChecked`: same as detectors
 
 ### Temperature/Humidity Sensors
@@ -108,7 +109,7 @@ Each STH0B or STH51 gets an "X-Sense Temperature/Humidity Sensor" child device w
 - **Battery**: Battery level percentage (0%, 33%, 66%, 100%)
 
 #### Attributes
-- `alarmState`: idle/alarm (reading outside the range configured in the X-Sense app)
+- `alarmState`: idle/lowTemperature/highTemperature/lowHumidity/highHumidity, based on the ranges configured in the X-Sense app
 - `temperatureRangeLow`, `temperatureRangeHigh`: alarm range in your hub's scale
 - `humidityRangeLow`, `humidityRangeHigh`: alarm range percent
 - `signalStrength`, `rssi`, `healthStatus`, `deviceStatus`, `lastChecked`: same as detectors
