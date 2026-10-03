@@ -930,6 +930,7 @@ def processDevice(String stationId, Map dev) {
 
 @groovy.transform.Field static final String SMOKE_DRIVER = "X-Sense Smoke/CO Detector"
 @groovy.transform.Field static final String WATER_DRIVER = "X-Sense Water Leak Sensor"
+@groovy.transform.Field static final String TH_DRIVER = "X-Sense Temperature/Humidity Sensor"
 
 /**
  * Returns true for X-Sense water leak sensors (SWS51 and similar).
@@ -945,7 +946,13 @@ def isWaterSensorType(String deviceType) {
  */
 def childDriverForType(String deviceType) {
     if (isWaterSensorType(deviceType)) return WATER_DRIVER
+    if (isTempHumidityType(deviceType)) return TH_DRIVER
     return SMOKE_DRIVER
+}
+
+/** Returns true for X-Sense temperature/humidity sensors (STH0B, STH51 and similar). */
+def isTempHumidityType(String deviceType) {
+    return deviceType?.toUpperCase()?.startsWith("STH")
 }
 
 /**
@@ -954,7 +961,7 @@ def childDriverForType(String deviceType) {
  */
 def isMismatchedXsenseChild(child, String wantedDriver) {
     def current = child.typeName
-    return (current == SMOKE_DRIVER || current == WATER_DRIVER) && current != wantedDriver
+    return (current in [SMOKE_DRIVER, WATER_DRIVER, TH_DRIVER]) && current != wantedDriver
 }
 
 def createChildDevice(String deviceId, String deviceName, String deviceType) {
@@ -978,7 +985,9 @@ def createChildDevice(String deviceId, String deviceName, String deviceType) {
             ])
         } catch (e) {
             logWarn "Driver '${driverName}' not found, using generic: ${e.message}"
-            def genericDriver = isWaterSensorType(deviceType) ? "Virtual Moisture Sensor" : "Virtual Smoke Detector"
+            def genericDriver = "Virtual Smoke Detector"
+            if (isWaterSensorType(deviceType)) genericDriver = "Virtual Moisture Sensor"
+            else if (isTempHumidityType(deviceType)) genericDriver = "Virtual Omni Sensor"
             try {
                 childDevice = addChildDevice("hubitat", genericDriver, dni, [
                     name: deviceName,
@@ -1210,6 +1219,8 @@ def updateChildDevice(String deviceSn, Map deviceData) {
 
     if (isWaterSensorType(deviceType) || childDevice.typeName == WATER_DRIVER) {
         updateWaterChild(childDevice, deviceData)
+    } else if (isTempHumidityType(deviceType) || childDevice.typeName == TH_DRIVER) {
+        updateTempHumidityChild(childDevice, deviceData)
     } else {
         updateSmokeChild(childDevice, deviceData)
     }
@@ -1311,14 +1322,28 @@ def updateSmokeChild(childDevice, Map deviceData) {
 // ---------- Water leak sensors (SWS51) ----------
 
 def updateWaterChild(childDevice, Map deviceData) {
+    // Observed SWS51 shadow (2026-10-03): status.alarmStatus "0" dry / "1" wet, status.muteStatus "1" at
+    // rest on every sensor, status.silenceTime "0". The waterAlarmStatus name seen in other
+    // integrations is accepted too in case other models or firmware use it.
     def waterAlarm = shadowField(deviceData, "waterAlarmStatus")
-    def waterMute = shadowField(deviceData, "waterMuteStatus")
+    if (waterAlarm == null) waterAlarm = shadowField(deviceData, "alarmStatus")
+    def muteCode = shadowField(deviceData, "waterMuteStatus")
+    if (muteCode == null) muteCode = shadowField(deviceData, "muteStatus")
+    def silenceTime = shadowField(deviceData, "silenceTime")
+
+    def wet = null
+    if (waterAlarm != null) {
+        def code = waterAlarm as Integer
+        wet = code != 0
+        if (code > 1) logWarn "Unexpected water alarmStatus ${code} for ${childDevice.displayName}; treating as wet"
+    }
 
     if (childDevice.hasCommand("updateStatus")) {
         // Our own water child driver: hand it a normalized map
         def status = [:]
-        if (waterAlarm != null) status.water = (waterAlarm as Integer) == 1
-        if (waterMute != null) status.muted = (waterMute as Integer) == 1
+        if (wet != null) status.water = wet
+        if (muteCode != null) status.muteCode = muteCode as Integer
+        if (silenceTime != null) status.silenceTime = silenceTime as Integer
         def battery = batteryPercent(deviceData)
         if (battery != null) status.battery = battery
         def rssi = rssiDbm(deviceData)
@@ -1329,13 +1354,70 @@ def updateWaterChild(childDevice, Map deviceData) {
     } else {
         // Generic fallback driver (e.g. Virtual Moisture Sensor): send raw events
         sendSharedEvents(childDevice, deviceData)
-        if (waterAlarm != null) {
-            childDevice.sendEvent(name: "water", value: (waterAlarm as Integer) == 1 ? "wet" : "dry")
+        if (wet != null) {
+            childDevice.sendEvent(name: "water", value: wet ? "wet" : "dry")
         }
     }
 
-    if (waterAlarm == null) {
-        logDebug "No waterAlarmStatus field for ${childDevice.displayName}; " +
+    if (wet == null) {
+        logDebug "No alarmStatus field for ${childDevice.displayName}; " +
+                 "enable 'Log raw device shadow data' to inspect the payload"
+    }
+}
+
+// ---------- Temperature / humidity sensors (STH0B, STH51) ----------
+
+/** Converts a Celsius reading from X-Sense to the hub's temperature scale, rounded to one decimal. */
+def toHubTemperature(value) {
+    if (value == null) return null
+    def c = value as BigDecimal
+    def out = (location.temperatureScale == "F") ? (c * 9 / 5 + 32) : c
+    return out.setScale(1, BigDecimal.ROUND_HALF_UP)
+}
+
+def updateTempHumidityChild(childDevice, Map deviceData) {
+    // Observed STH0B shadow (2026-10-03). The status map uses single-letter keys:
+    //   a = alarm status (0/1), b = temperature in Celsius, c = relative humidity %,
+    //   e = [low, high] temperature alarm range in Celsius, f = [low, high] humidity range,
+    //   d, g, h = unknown, t = timestamp
+    def temperature = shadowField(deviceData, "b")
+    def humidity = shadowField(deviceData, "c")
+    def alarm = shadowField(deviceData, "a")
+    def tempRange = shadowField(deviceData, "e")
+    def humRange = shadowField(deviceData, "f")
+
+    if (childDevice.hasCommand("updateStatus")) {
+        def status = [:]
+        if (temperature != null) status.temperature = toHubTemperature(temperature)
+        if (humidity != null) status.humidity = (humidity as BigDecimal).setScale(1, BigDecimal.ROUND_HALF_UP)
+        if (alarm != null) status.alarm = (alarm as Integer) != 0
+        if (tempRange instanceof List && tempRange.size() == 2) {
+            status.tempRange = tempRange.collect { toHubTemperature(it) }
+        }
+        if (humRange instanceof List && humRange.size() == 2) {
+            status.humidityRange = humRange.collect { it as BigDecimal }
+        }
+        def battery = batteryPercent(deviceData)
+        if (battery != null) status.battery = battery
+        def rssi = rssiDbm(deviceData)
+        if (rssi != null) status.rssi = rssi
+        def online = isOnline(deviceData)
+        if (online != null) status.online = online
+        childDevice.updateStatus(status)
+    } else {
+        // Generic fallback driver (e.g. Virtual Omni Sensor): send raw events
+        sendSharedEvents(childDevice, deviceData)
+        def scale = location.temperatureScale ?: "F"
+        if (temperature != null) {
+            childDevice.sendEvent(name: "temperature", value: toHubTemperature(temperature), unit: "°${scale}")
+        }
+        if (humidity != null) {
+            childDevice.sendEvent(name: "humidity", value: humidity, unit: "%")
+        }
+    }
+
+    if (temperature == null) {
+        logDebug "No temperature field for ${childDevice.displayName}; " +
                  "enable 'Log raw device shadow data' to inspect the payload"
     }
 }

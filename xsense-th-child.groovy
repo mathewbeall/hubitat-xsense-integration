@@ -1,5 +1,5 @@
 /**
- *  X-Sense Water Leak Sensor Child Driver for Hubitat
+ *  X-Sense Temperature/Humidity Sensor Child Driver for Hubitat
  *
  *  Copyright 2025
  *
@@ -9,18 +9,17 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  *
  *  Description:
- *  Child driver for X-Sense water leak sensors (SWS51 and compatible models).
- *  Works in conjunction with the X-Sense SBS50 Bridge parent driver.
+ *  Child driver for X-Sense temperature and humidity sensors (STH0B, STH51 and compatible models).
+ *  Works in conjunction with the X-Sense Integration parent app.
  *
- *  The parent driver creates this child for any device whose X-Sense type begins with "SWS".
- *  Status comes from the base station shadow. Observed on real SWS51 hardware (2026-10-03):
- *  status.alarmStatus is 0 when dry and 1 when water is detected. status.muteStatus reads 1 on
- *  every sensor at rest, so its meaning is not yet known and it is exposed raw as muteCode.
+ *  The parent app creates this child for any device whose X-Sense type begins with "STH".
+ *  The parent converts temperatures to the hub's temperature scale before sending them here.
  */
 
 metadata {
-    definition(name: "X-Sense Water Leak Sensor", namespace: "xsense", author: "Community") {
-        capability "Water Sensor"
+    definition(name: "X-Sense Temperature/Humidity Sensor", namespace: "xsense", author: "Community") {
+        capability "Temperature Measurement"
+        capability "Relative Humidity Measurement"
         capability "Battery"
         capability "Sensor"
         capability "Refresh"
@@ -33,9 +32,11 @@ metadata {
         attribute "serialNumber", "string"
         attribute "firmwareVersion", "string"
         attribute "deviceType", "string"
-        attribute "alarmState", "string"   // idle / water
-        attribute "muteCode", "number"      // raw X-Sense muteStatus value, meaning not yet confirmed
-        attribute "silenceTime", "number"   // raw X-Sense silenceTime value
+        attribute "alarmState", "string"      // idle / alarm (reading outside configured range)
+        attribute "temperatureRangeLow", "number"
+        attribute "temperatureRangeHigh", "number"
+        attribute "humidityRangeLow", "number"
+        attribute "humidityRangeHigh", "number"
     }
 
     preferences {
@@ -46,16 +47,15 @@ metadata {
 // ==================== Lifecycle Methods ====================
 
 def installed() {
-    logDebug "X-Sense Water Leak Sensor child device installed"
+    logDebug "X-Sense Temperature/Humidity Sensor child device installed"
     initialize()
 }
 
 def updated() {
-    logDebug "X-Sense Water Leak Sensor child device updated"
+    logDebug "X-Sense Temperature/Humidity Sensor child device updated"
 }
 
 def initialize() {
-    sendEvent(name: "water", value: "dry")
     sendEvent(name: "alarmState", value: "idle")
     sendEvent(name: "deviceStatus", value: "unknown")
 }
@@ -71,27 +71,39 @@ def refresh() {
 
 /**
  * Accepts a normalized status map from the parent:
- *   water:       true/1 = wet, false/0 = dry
- *   muteCode:    raw muteStatus value from X-Sense
- *   silenceTime: raw silenceTime value from X-Sense
- *   battery: percentage
- *   rssi:    dBm
- *   online:  true/false
+ *   temperature:   number, already in the hub's scale
+ *   humidity:      number, percent
+ *   alarm:         true/1 = reading outside the configured range
+ *   tempRange:     [low, high] in the hub's scale
+ *   humidityRange: [low, high] percent
+ *   battery, rssi, online: as for the other X-Sense child drivers
  */
 def updateStatus(Map status) {
     logDebug "Updating status: ${status}"
 
-    if (status.containsKey("water")) {
-        def wet = (status.water == 1 || status.water == true || status.water == "1")
-        sendEvent(name: "water", value: wet ? "wet" : "dry")
+    def scale = location.temperatureScale ?: "F"
+
+    if (status.containsKey("temperature")) {
+        sendEvent(name: "temperature", value: status.temperature, unit: "°${scale}")
     }
 
-    if (status.containsKey("muteCode")) {
-        sendEvent(name: "muteCode", value: status.muteCode)
+    if (status.containsKey("humidity")) {
+        sendEvent(name: "humidity", value: status.humidity, unit: "%")
     }
 
-    if (status.containsKey("silenceTime")) {
-        sendEvent(name: "silenceTime", value: status.silenceTime)
+    if (status.containsKey("alarm")) {
+        def alarm = (status.alarm == 1 || status.alarm == true || status.alarm == "1")
+        sendEvent(name: "alarmState", value: alarm ? "alarm" : "idle")
+    }
+
+    if (status.tempRange instanceof List && status.tempRange.size() == 2) {
+        sendEvent(name: "temperatureRangeLow", value: status.tempRange[0], unit: "°${scale}")
+        sendEvent(name: "temperatureRangeHigh", value: status.tempRange[1], unit: "°${scale}")
+    }
+
+    if (status.humidityRange instanceof List && status.humidityRange.size() == 2) {
+        sendEvent(name: "humidityRangeLow", value: status.humidityRange[0], unit: "%")
+        sendEvent(name: "humidityRangeHigh", value: status.humidityRange[1], unit: "%")
     }
 
     if (status.containsKey("battery")) {
@@ -114,9 +126,6 @@ def updateStatus(Map status) {
         sendEvent(name: "healthStatus", value: onlineStr)
         sendEvent(name: "deviceStatus", value: onlineStr)
     }
-
-    // Derive alarmState from water
-    sendEvent(name: "alarmState", value: device.currentValue("water") == "wet" ? "water" : "idle")
 
     sendEvent(name: "lastChecked", value: new Date().format("yyyy-MM-dd HH:mm:ss"))
 }
@@ -143,5 +152,5 @@ def setDeviceInfo(Map info) {
 // ==================== Logging ====================
 
 def logDebug(msg) {
-    if (enableDebug) log.debug "[X-Sense Water] ${msg}"
+    if (enableDebug) log.debug "[X-Sense T/H] ${msg}"
 }

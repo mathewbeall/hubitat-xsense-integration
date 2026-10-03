@@ -8,6 +8,7 @@ through the SBS50 base station. Installed as a Hubitat app that creates one chil
 - **Base station**: X-Sense SBS50
 - **Smoke/CO Detectors**: SC07-MR (Smoke + CO Combo) and other Link+ compatible devices
 - **Water Leak Sensors**: SWS51 (paired to the SBS50)
+- **Temperature/Humidity Sensors**: STH0B, STH51 (paired to the SBS50)
 
 ## Requirements
 
@@ -30,7 +31,7 @@ through the SBS50 base station. Installed as a Hubitat app that creates one chil
 
 1. In Hubitat, go to **Apps Code** → **+ New App**, paste `xsense-app.groovy`, click **Save**
 2. Go to **Drivers Code** → **+ New Driver**, paste `xsense-detector-child.groovy`, click **Save**
-3. Repeat for `xsense-water-child.groovy`
+3. Repeat for `xsense-water-child.groovy` and `xsense-th-child.groovy`
 
 ## Setup
 
@@ -93,8 +94,23 @@ Each SWS51 gets an "X-Sense Water Leak Sensor" child device with:
 - **Battery**: Battery level percentage (0%, 33%, 66%, 100%)
 
 #### Attributes
-- `alarmState`: idle/water/muted
-- `muteStatus`: muted/notMuted (alarm silenced from the sensor or app)
+- `alarmState`: idle/water
+- `muteCode`, `silenceTime`: raw X-Sense values, exposed until their meaning is confirmed
+- `signalStrength`, `rssi`, `healthStatus`, `deviceStatus`, `lastChecked`: same as detectors
+
+### Temperature/Humidity Sensors
+
+Each STH0B or STH51 gets an "X-Sense Temperature/Humidity Sensor" child device with:
+
+#### Capabilities
+- **Temperature Measurement**: `temperature` in your hub's temperature scale
+- **Relative Humidity Measurement**: `humidity` percent
+- **Battery**: Battery level percentage (0%, 33%, 66%, 100%)
+
+#### Attributes
+- `alarmState`: idle/alarm (reading outside the range configured in the X-Sense app)
+- `temperatureRangeLow`, `temperatureRangeHigh`: alarm range in your hub's scale
+- `humidityRangeLow`, `humidityRangeHigh`: alarm range percent
 - `signalStrength`, `rssi`, `healthStatus`, `deviceStatus`, `lastChecked`: same as detectors
 
 ## Integration with Hubitat Safety Monitor
