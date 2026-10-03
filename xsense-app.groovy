@@ -956,6 +956,15 @@ def isTempHumidityType(String deviceType) {
 }
 
 /**
+ * True when the child runs one of this package's own drivers, which expose updateStatus() and
+ * setDeviceInfo(). hasCommand() cannot be used for this: it only reports commands declared in the
+ * driver metadata, and these are plain methods.
+ */
+def isXsenseChild(child) {
+    return child?.typeName in [SMOKE_DRIVER, WATER_DRIVER, TH_DRIVER]
+}
+
+/**
  * True when the child runs one of our own X-Sense drivers but not the one its device type calls for.
  * Children on generic fallback drivers are left alone.
  */
@@ -1001,7 +1010,7 @@ def createChildDevice(String deviceId, String deviceName, String deviceType) {
     }
 
     if (childDevice) {
-        if (childDevice.hasCommand("setDeviceInfo")) {
+        if (isXsenseChild(childDevice)) {
             childDevice.setDeviceInfo([serialNumber: deviceId, deviceType: deviceType])
         }
     }
@@ -1338,7 +1347,7 @@ def updateWaterChild(childDevice, Map deviceData) {
         if (code > 1) logWarn "Unexpected water alarmStatus ${code} for ${childDevice.displayName}; treating as wet"
     }
 
-    if (childDevice.hasCommand("updateStatus")) {
+    if (isXsenseChild(childDevice)) {
         // Our own water child driver: hand it a normalized map
         def status = [:]
         if (wet != null) status.water = wet
@@ -1386,7 +1395,7 @@ def updateTempHumidityChild(childDevice, Map deviceData) {
     def tempRange = shadowField(deviceData, "e")
     def humRange = shadowField(deviceData, "f")
 
-    if (childDevice.hasCommand("updateStatus")) {
+    if (isXsenseChild(childDevice)) {
         def status = [:]
         if (temperature != null) status.temperature = toHubTemperature(temperature)
         if (humidity != null) status.humidity = (humidity as BigDecimal).setScale(1, BigDecimal.ROUND_HALF_UP)
